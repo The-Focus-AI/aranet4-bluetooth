@@ -6,7 +6,7 @@ import pytest
 
 from aranet import parse_advertisement, parse_reading
 
-# Captured from the device (Aranet4 2EE58, fw v2.0.7).
+# Captured from a real device (fw v2.0.7, sw v1.5.45).
 CURRENT_CHAR = bytes.fromhex("b30285010f272650012c019300")
 ADV_PAYLOAD = bytes.fromhex("2107000200120f01b30285010f272650012c018100f1")
 

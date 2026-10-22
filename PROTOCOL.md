@@ -39,7 +39,7 @@ A1B2C3D4-E5F6-7890-ABCD-EF0123456789   (example)
 ```
 
 That UUID differs on every Mac and can change if you unpair, so never hardcode
-it. On Linux/BlueZ you do see the real hardware address (`CC:43:4B:4A:42:F2`).
+it. On Linux/BlueZ you do see the real hardware address (`AA:BB:CC:DD:EE:FF`).
 
 ## 2. Advertising packet
 
