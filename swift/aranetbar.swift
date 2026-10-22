@@ -133,6 +133,7 @@ final class AranetBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate, CBCen
     private var verbose = false
     private var oneshot = false
     private var dumpMenu = false
+    private var lastLoggedSignature: String?
 
     // Scanning is duty-cycled: the sensor only logs every `interval` seconds
     // (5 min by default), so there is no point keeping the radio busy forever.
@@ -243,12 +244,18 @@ final class AranetBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate, CBCen
         let previous = reading
         reading = parsed
 
-        log(
-            "📡 \(deviceName ?? "Aranet4"): CO2 \(parsed.co2) ppm, "
-                + String(format: "%.2f C, %.1f hPa, ", parsed.temperatureC, parsed.pressureHpa)
-                + "RH \(parsed.humidity)%, bat \(parsed.battery)%, "
-                + "status \(parsed.statusName), age \(parsed.age)s, rssi \(parsed.rssi)"
-        )
+        // Several advertisements arrive per measurement; only log real changes
+        // so the log stays readable (rssi jitter is deliberately ignored).
+        let signature = "\(parsed.co2)|\(parsed.temperatureC)|\(parsed.humidity)|\(parsed.age)"
+        if signature != lastLoggedSignature {
+            lastLoggedSignature = signature
+            log(
+                "📡 \(deviceName ?? "Aranet4"): CO2 \(parsed.co2) ppm, "
+                    + String(format: "%.2f C, %.1f hPa, ", parsed.temperatureC, parsed.pressureHpa)
+                    + "RH \(parsed.humidity)%, bat \(parsed.battery)%, "
+                    + "status \(parsed.statusName), age \(parsed.age)s, rssi \(parsed.rssi)"
+            )
+        }
 
         if dumpMenu {
             onceTimeout?.invalidate()
@@ -331,8 +338,14 @@ final class AranetBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate, CBCen
             return
         }
 
+        // The preferred unit leads; the other stays visible so the row is never
+        // ambiguous. This is what the "Show Fahrenheit" toggle actually changes.
+        let temperature = useFahrenheit
+            ? String(format: "%.1f °F  ·  %.1f °C", r.temperatureF, r.temperatureC)
+            : String(format: "%.1f °C  ·  %.1f °F", r.temperatureC, r.temperatureF)
+
         menu.addItem(info("CO₂", "\(r.co2) ppm", color: r.statusColor))
-        menu.addItem(info("Temperature", String(format: "%.1f °C  ·  %.1f °F", r.temperatureC, r.temperatureF)))
+        menu.addItem(info("Temperature", temperature))
         menu.addItem(info("Humidity", "\(r.humidity) %"))
         menu.addItem(info("Pressure", String(format: "%.1f hPa", r.pressureHpa)))
         menu.addItem(info("Battery", "\(r.battery) %"))
@@ -481,7 +494,9 @@ final class AranetBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate, CBCen
             if item.isSeparatorItem {
                 print("  ---")
             } else {
-                print("  \(item.attributedTitle?.string ?? item.title)")
+                let title = item.attributedTitle?.string ?? item.title
+                let checked = item.state == .on ? "  [checked]" : ""
+                print("  \(title)\(checked)")
             }
         }
         fflush(stdout)
