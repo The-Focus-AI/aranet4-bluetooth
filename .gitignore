@@ -1,11 +1,17 @@
-node_modules/
+# macOS
+.DS_Store
+
+# Python
 .venv/
 __pycache__/
+*.py[cod]
 .pytest_cache/
-.aranet-address
 
-# Built app bundle (regenerate with aranetbar/build.sh)
-aranetbar/AranetBar.app/
+# Cached CoreBluetooth identifier (per-Mac, not portable)
+python/.aranet-address
 
-# Intermediate iconset (regenerate with aranetbar/make_icon.py)
-aranetbar/AppIcon.iconset/
+# Built app bundle (regenerate with swift/build.sh)
+swift/AranetBar.app/
+
+# Intermediate iconset (regenerate with swift/make_icon.py)
+swift/AppIcon.iconset/
