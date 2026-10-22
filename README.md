@@ -30,6 +30,14 @@ real GATT connection when you want the full 13-byte characteristic.
 A menu bar utility in the spirit of the *singlefilemenuapps* collection: one
 file, one purpose, nothing beyond system frameworks.
 
+**Prebuilt:** grab `AranetBar-<version>.zip` from
+[Releases](https://github.com/The-Focus-AI/aranet4-bluetooth/releases/latest),
+unzip, and drag to `/Applications`. It is ad-hoc signed, not notarized, so on
+first launch use right-click → **Open** (or `xattr -dr com.apple.quarantine
+AranetBar.app`).
+
+Or build it yourself:
+
 ```bash
 cd swift
 ./aranetbar.swift          # run it directly
@@ -86,7 +94,6 @@ python/       Python CLI, parser and tests
 swift/        AranetBar menu bar app, build script and icon generator
 PROTOCOL.md   The BLE wire format, reverse-engineered and tagged verified/inferred
 ```
-
 ## Requirements
 
 - **Swift app:** macOS 13+, Xcode command line tools (`swiftc`). First launch
@@ -104,3 +111,8 @@ PROTOCOL.md   The BLE wire format, reverse-engineered and tagged verified/inferr
   is pointless. Both implementations report `age` so you can tell how fresh the
   data is instead of being misled.
 - The history log is **not** implemented — see [PROTOCOL.md §6](PROTOCOL.md#6-history-log--partially-mapped-).
+
+## License
+
+[MIT](LICENSE) © 2026 Focus AI. The protocol documentation is prose, not
+reverse-engineered code — use it freely.

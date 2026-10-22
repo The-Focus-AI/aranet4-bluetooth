@@ -6,7 +6,19 @@ advertisement.
 
 <img src="icon-1024.png" width="128" alt="AranetBar icon">
 
-## Quick start
+## Install
+
+**Prebuilt:** download `AranetBar-<version>.zip` from
+[Releases](https://github.com/The-Focus-AI/aranet4-bluetooth/releases/latest),
+unzip, and drag `AranetBar.app` to `/Applications`.
+
+The app is **ad-hoc signed, not notarized** (no Apple Developer ID). On first
+launch macOS will refuse it with "Apple could not verify…". Do one of:
+
+- right-click the app → **Open** → **Open** again, or
+- `xattr -dr com.apple.quarantine /Applications/AranetBar.app`
+
+**From source:**
 
 ```bash
 ./aranetbar.swift          # run directly
@@ -88,9 +100,23 @@ python3 make_icon.py        # needs Pillow; rewrites AppIcon.icns + icon-1024.pn
 
 Requires Pillow (`pip install pillow`) and macOS's `iconutil`.
 
+## Releasing
+
+```bash
+VERSION=1.0.0 ./package.sh      # builds the .app and AranetBar-1.0.0.zip
+gh release create v1.0.0 AranetBar-1.0.0.zip \
+    --title "AranetBar 1.0.0" --notes "…"
+```
+
+`build.sh` compiles a **universal binary** (arm64 + x86_64) and stamps
+`VERSION` / `BUILD_NUMBER` into `Info.plist`. `package.sh` wraps the bundle with
+`ditto`, which preserves permissions and extended attributes that plain `zip`
+would mangle.
+
 ## Files
 
 - `aranetbar.swift` — the whole app
-- `build.sh` — builds `AranetBar.app` (usage strings, icon, ad-hoc signing)
+- `build.sh` — builds `AranetBar.app` (universal, usage strings, icon, ad-hoc signing)
+- `package.sh` — builds and zips a release artifact
 - `make_icon.py` — regenerates `AppIcon.icns` and `icon-1024.png`
 - `AppIcon.icns`, `icon-1024.png` — the generated icon

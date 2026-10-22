@@ -12,6 +12,10 @@ python/.aranet-address
 
 # Built app bundle (regenerate with swift/build.sh)
 swift/AranetBar.app/
+swift/.build/
+
+# Release archives (regenerate with swift/package.sh)
+swift/AranetBar-*.zip
 
 # Intermediate iconset (regenerate with swift/make_icon.py)
 swift/AppIcon.iconset/

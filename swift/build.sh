@@ -10,18 +10,33 @@ set -e
 
 APP_NAME="AranetBar"
 BUNDLE_ID="ai.thefocus.aranetbar"
+VERSION="${VERSION:-1.0.0}"
+BUILD_NUMBER="${BUILD_NUMBER:-1}"
+MIN_MACOS="13.0"
 
-echo "🔨 Building ${APP_NAME}.app..."
+echo "🔨 Building ${APP_NAME}.app ${VERSION} (${BUILD_NUMBER})..."
 
 rm -rf "${APP_NAME}.app"
 mkdir -p "${APP_NAME}.app/Contents/MacOS"
 mkdir -p "${APP_NAME}.app/Contents/Resources"
 
 echo "📦 Compiling aranetbar.swift..."
-swiftc -O \
-    -target "$(uname -m)-apple-macosx13.0" \
-    aranetbar.swift \
-    -o "${APP_NAME}.app/Contents/MacOS/${APP_NAME}"
+BIN="${APP_NAME}.app/Contents/MacOS/${APP_NAME}"
+compile_arch() {
+    swiftc -O -target "$1-apple-macosx${MIN_MACOS}" aranetbar.swift -o "$2"
+}
+
+# Ship a universal binary so Intel Macs can run it too. Fall back to the host
+# architecture if the other slice cannot be built (e.g. a trimmed SDK).
+rm -rf .build && mkdir -p .build
+if compile_arch arm64 .build/arm64 && compile_arch x86_64 .build/x86_64; then
+    lipo -create .build/arm64 .build/x86_64 -output "${BIN}"
+    echo "   universal binary (arm64 + x86_64)"
+else
+    echo "   ⚠️  universal build unavailable, compiling host arch only"
+    swiftc -O -target "$(uname -m)-apple-macosx${MIN_MACOS}" aranetbar.swift -o "${BIN}"
+fi
+rm -rf .build
 
 if [ -f AppIcon.icns ]; then
     echo "🎨 Adding app icon..."
@@ -47,11 +62,11 @@ cat > "${APP_NAME}.app/Contents/Info.plist" << EOF
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.0</string>
+    <string>${VERSION}</string>
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>${BUILD_NUMBER}</string>
     <key>LSMinimumSystemVersion</key>
-    <string>13.0</string>
+    <string>${MIN_MACOS}</string>
     <key>LSUIElement</key>
     <true/>
     <key>CFBundleIconFile</key>
