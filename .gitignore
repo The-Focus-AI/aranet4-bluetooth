@@ -1,1 +1,11 @@
 node_modules/
+.venv/
+__pycache__/
+.pytest_cache/
+.aranet-address
+
+# Built app bundle (regenerate with aranetbar/build.sh)
+aranetbar/AranetBar.app/
+
+# Intermediate iconset (regenerate with aranetbar/make_icon.py)
+aranetbar/AppIcon.iconset/
