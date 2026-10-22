@@ -112,19 +112,20 @@ suffix, `-95DA-4F4B-9AC8-AA55D312AF0C`:
 | `f0cd2004` | read | 2 | Seconds since last measurement (153) | ✅ |
 | `f0cd1401` | read | 12 | Config; u16s `[24817, 129, 1000, 1400, 1000, 1400]` | ⚠️ |
 | `f0cd1502` | read | 8 | `ff ff ff ff ff ff ff ff` — sentinel | ⚠️ |
-| `f0cd2001` | read | 2 | `0x13b0` = 5040, constant across reads | ⚠️ |
-| `f0cd2003` | read, notify | 244 | History buffer; all zero until requested | ⚠️ |
-| `f0cd2005` | read | 244 | History page (see §6) | ⚠️ |
-| `f0cd1402` | write | — | Command channel (history fetch) | ⚠️ |
+| `f0cd2001` | read | 2 | **Total stored readings** (5040 = 17.5 days at 300 s) | ✅ |
+| `f0cd2003` | read, notify | 244 | Legacy history notifications (ignored by v2.0.7) | ✅ |
+| `f0cd2005` | read | 244 | **History page** — 10-byte header + values (see §6) | ✅ |
+| `f0cd1402` | write | — | Command channel: history requests, interval/range config | ✅ |
 
 `f0cd1401` decodes to CO₂ thresholds of **1000** and **1400** (each appearing
 twice) — the same cut-offs the meter's LEDs and the `status` byte use. Treat
 this as inferred: it is consistent with the data, but it was never verified by
 changing the thresholds in the Aranet app.
 
-> **Heads-up:** several blog posts and older libraries reference a `0xF371`
-> service (`f371c4c1-…`). This firmware does **not** expose it. Enumerating the
-> device is the only reliable way to find the real UUIDs.
+> **Firmware gotcha:** the service UUID is not stable across firmware. This unit
+> (v1.2.0+) exposes `0000fce0-…`; pre-v1.2.0 firmware exposes
+> `f0cd1400-95da-4f4b-9ac8-aa55d312af0c` instead. Try both, and enumerate the
+> device rather than hardcoding either.
 
 ## 4. Current reading — 13 bytes (canonical)
 
@@ -206,27 +207,123 @@ Aranet phone app cannot be, and vice versa.
 already carries everything. A connection is only required for configuration and
 for the history log.
 
-## 6. History log — partially mapped ⚠️
+## 6. History log — verified ✅
 
-Reading `f0cd2005` returns a 244-byte page that begins with a header and then a
-run of 2-byte records. Header observed as:
+The meter keeps a ring buffer of stored measurements, newest at the highest
+index. `f0cd2001` reports its size: **5,040 records**, i.e. 17.5 days at the
+default 300 s interval. Once full, the oldest records are overwritten.
+
+The buffer is stored **one parameter at a time**, not as interleaved records.
+Each series is fetched separately and then joined by index. There are no
+absolute timestamps on the device — see §6.4.
+
+### 6.1 Request a series
+
+Write 4 bytes to the command characteristic `f0cd1402`:
+
+| Offset | Size | Field |
+|---|---|---|
+| 0 | u8 | Command `0x61` |
+| 1 | u8 | Parameter, see table |
+| 2 | u16 | First record index (1-based) |
+
+Example: `61 04 01 00` = CO₂, from record 1.
+
+| Value | Parameter | Stored as |
+|---|---|---|
+| 1 | temperature | u16, ÷ 20 → °C |
+| 2 | humidity | u8, % |
+| 3 | pressure | u16, ÷ 10 → hPa |
+| 4 | CO₂ | u16, ppm |
+
+Then read `f0cd2005` repeatedly. Each successful read returns the next page —
+no further write is needed. A page is always 244 bytes.
+
+### 6.2 Page layout
+
+Header, 10 bytes, little endian:
+
+| Offset | Size | Field |
+|---|---|---|
+| 0 | u8 | Parameter (echoes the request) |
+| 1 | u16 | Logging interval, seconds |
+| 3 | u16 | Total stored records |
+| 5 | u16 | Age of the newest record, seconds |
+| 7 | u16 | Index of the first value in this page (1-based) |
+| 9 | u8 | Number of values in this page |
+
+Then `count` values starting at offset 10: u16 each, except humidity, which is
+u8. A full page therefore carries 117 values (u16) or 234 values (humidity).
+The final page may be short; ignore the unused tail. Stop when
+`start + count - 1 >= total`.
+
+### 6.3 Value sentinels
+
+| Parameter | Invalid when | Result |
+|---|---|---|
+| temperature | bit 14 set (`0x4000`) | no measurement |
+| pressure | bit 15 set (`0x8000`) | no measurement |
+| CO₂ | bit 15 set (`0x8000`) | no measurement |
+| humidity | value > 100 | no measurement |
+
+The high bits are set while the sensor cannot measure (for example during CO₂
+calibration), so a decoder must not present `0x8000` as 32768 ppm. Humidity is
+a single byte, so the usual `value >> 8` test cannot fire; `0xff` (255) is
+treated as invalid.
+
+### 6.4 Timestamps (reconstructed)
+
+The device stores no wall-clock time per record. It reports:
+
+- `age` — seconds since the newest record was measured;
+- `interval` — seconds between records.
+
+With `total` records and index `i` (1 = oldest):
 
 ```
-03 | 2c 01 | b0 13 | 99 00 | 72 00 | ...
-     interval   ?      age    ?
+newest = now - age
+t(i)   = newest - (total - i) * interval
 ```
 
-The records that follow decode plausibly as **pressure in 0.1 hPa**
-(`f1 26` → 9969 → 996.9 hPa, and so on in a tight monotonic run), but the
-record layout, page framing, and how to request older pages are **not**
-reverse-engineered. Fetching the backlog requires writing commands to
-`f0cd1402` (`f0cd2003` is the notify side of that exchange).
+This is only as good as the assumption that the meter logged continuously at
+the current interval. Changing the interval, power-cycling, or a full buffer
+shifts older entries. Treat timestamps as accurate to a few seconds.
 
-Nothing in this repo implements history. Live readings do not need it.
+### 6.5 Worked example
+
+Request CO₂ from index 1 (`61 04 01 00`), then read `f0cd2005`:
+
+```
+04 | 2c 01 | b0 13 | 82 00 | 01 00 | 75 | 25 02 0c 02 28 02 12 02 ...
+    300 s    5040    130 s    start 1  117  549   524   552   530
+```
+
+- parameter 4 (CO₂), interval 300 s, 5,040 records stored, newest 130 s ago
+- the page starts at record 1 and carries 117 values
+- values 549, 524, 552, 530 … ppm
+- the last record of the series matched the live characteristic (713 ppm) at
+  capture time, confirming the index and timestamp mapping ✅
+
+Before a request is processed, `f0cd2005` returns the last page it served (often
+a pressure page, parameter 3). Ignore pages whose parameter does not match the
+request.
+
+### 6.6 Legacy path (not used by this firmware)
+
+Older firmware used `f0cd2003` notifications with a different command:
+`82 <param> 00 00 <start u16> <end u16>`. On firmware v2.0.7 / software
+v1.5.45 this command is ignored — subscribing yields a single stale page and
+nothing else. New firmware serves history through the `0x61` protocol above.
+
+### 6.7 Implementation
+
+[`python/aranet.py history`](python/aranet.py) implements §6.1–6.4, downloads all
+four series in about 20 s, joins them by index, and writes CSV or JSON. See the
+[Python README](python/README.md#history).
 
 ## 7. Test vectors
 
-Use these to check any new parser. Both are real captures.
+Use these to check any new parser. All are real captures.
 
 ```
 # GATT f0cd3001 (13 bytes)
@@ -236,4 +333,9 @@ b302a9010f272550012c019900
 # advertisement, including company ID (24 bytes)
 02072107000200120f01bc02a00110272550012c019c00f3
   co2=700  temp=20.80C  press=1000.0hPa  hum=37  bat=80  status=green  interval=300  age=156
+
+# history page f0cd2005, prefix of the first CO2 page (full page = 117 values)
+04 2c 01 b0 13 82 00 01 00 75 25 02 0c 02 28 02 12 02
+  param=4  interval=300  total=5040  age=130  start=1  count=117
+  values: 549 524 552 530 552 ... (page continues)
 ```

@@ -4,12 +4,13 @@ A CLI and importable parser for the Aranet4 CO₂ monitor, built on
 [bleak](https://github.com/hbldh/bleak). Works on macOS (CoreBluetooth) and
 should work on Linux/Windows too.
 
-Two ways to read the meter:
+Three ways to read the meter:
 
 | Mode | Command | Cost |
 |---|---|---|
 | **Connected** | `read`, `watch` — a real GATT connection | Holds the BLE link |
 | **Passive** | `adv`, `adv-watch` — decode the advertisement | No connection, no battery cost |
+| **History** | `history` — download the on-board ring buffer | Holds the link for ~20 s |
 
 The wire format is documented in [../PROTOCOL.md](../PROTOCOL.md).
 
@@ -29,6 +30,7 @@ python3 -m venv .venv
 .venv/bin/python python/aranet.py watch           # poll while connected
 .venv/bin/python python/aranet.py adv             # one-shot passive decode
 .venv/bin/python python/aranet.py adv-watch       # continuous passive decode
+.venv/bin/python python/aranet.py history         # download stored data to CSV
 ```
 
 ```
@@ -39,7 +41,7 @@ Common options (accepted before or after the verb):
 
 | Flag | Meaning |
 |---|---|
-| `--json` | one JSON object per line |
+| `--json` | JSON (one object per line for `read`; one document for `history`) |
 | `--fahrenheit` | display temperature in °F (adds `temperature_f` to JSON) |
 | `--timeout N` | scan timeout in seconds (default 20) |
 | `--address ID` | skip the name search and use a known identifier |
@@ -52,6 +54,42 @@ Common options (accepted before or after the verb):
 .venv/bin/python python/aranet.py watch --poll 30 --count 5
 .venv/bin/python python/aranet.py adv-watch --window 5
 ```
+
+## History
+
+The meter keeps a ring buffer of 5,040 readings — 17.5 days at the default
+300 s interval. `history` downloads all four parameters, joins them by index,
+and writes CSV (or JSON) with reconstructed timestamps:
+
+```bash
+.venv/bin/python python/aranet.py history
+# Aranet4 12345  ·  SN 123456789012  ·  fw v2.0.7
+# 5040 records at 300 s  2026-10-04 21:54 → 2026-10-22 09:49 EDT
+# CO2 471–890 ppm (avg 563)  ·  12.95–23.85 °C  ·  RH 36–62%  ·  ...
+# Wrote 5040 rows to aranet-history-20261022-0953.csv
+```
+
+| Option | Meaning |
+|---|---|
+| `--last N` | only the newest N records |
+| `--days N` | only records from the last N days |
+| `--out PATH` | output file; `-` writes to stdout (default `aranet-history-<time>.csv`) |
+| `--format csv\|json` | explicit format; otherwise inferred from `--out`, or CSV |
+| `--json` | shorthand for JSON on stdout |
+
+```bash
+.venv/bin/python python/aranet.py history --last 288 --out day.csv
+.venv/bin/python python/aranet.py history --days 7 --format json --out week.json
+.venv/bin/python python/aranet.py history --json | jq '.records[-1]'
+```
+
+CSV columns: `timestamp` (local ISO 8601 with offset), `co2_ppm`,
+`temperature_c`, `humidity_pct`, `pressure_hpa`, `epoch_s`.
+
+**Timestamps are reconstructed, not stored.** The device only knows how long
+ago the newest reading was taken and the logging interval, so older entries are
+counted backwards. Expect a few seconds of slop; if the interval was changed or
+the meter was powered off, the oldest entries shift accordingly.
 
 ## Library use
 
@@ -67,12 +105,18 @@ print(reading.co2_ppm, reading.temperature_c, reading.temperature_f)
 reading = parse_advertisement(adv.manufacturer_data)
 if reading.is_stale:
     print("last measurement is older than the logging interval")
+
+# history pages decode without I/O too
+from aranet import parse_history_page
+
+header, raw_values = parse_history_page(page)
+print(header.param, header.interval_s, header.start, raw_values[:4])
 ```
 
 ## Tests
 
 ```bash
-.venv/bin/python -m pytest python/ -q      # 12 tests over real captured payloads
+.venv/bin/python -m pytest python/ -q      # 33 tests over real captured payloads
 ```
 
 ## macOS notes
@@ -88,6 +132,7 @@ if reading.is_stale:
 ## Files
 
 - `aranet.py` — the client and parser
-- `test_aranet.py` — parser tests
+- `test_aranet.py` — live-reading parser tests
+- `test_history.py` — history parser tests (real captured pages)
 - `scan.py`, `discover.py` — the exploration scripts used to map the device
   (handy if you need to re-enumerate services for new firmware)

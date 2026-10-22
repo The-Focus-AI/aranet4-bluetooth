@@ -8,7 +8,7 @@ Two complete, independent implementations. Either one stands on its own:
 | | Implementation | Best for |
 |---|---|---|
 | 🖥️ | [**AranetBar**](swift/) — single-file Swift menu bar app | CO₂ at a glance, always running |
-| 🐍 | [**aranet.py**](python/) — scriptable Python CLI + library | Automation, JSON, dashboards |
+| 🐍 | [**aranet.py**](python/) — scriptable Python CLI + library | Automation, JSON, history export |
 
 Both decode the same data and produce identical values. The wire format is
 documented in [PROTOCOL.md](PROTOCOL.md).
@@ -19,7 +19,8 @@ The Aranet4 **broadcasts every measurement in its BLE advertisement**. So you ca
 read it without ever opening a connection — which means no battery cost and no
 fighting the Aranet phone app for the BLE link. That is how the menu bar app
 works. The Python client can do either: passive advertisement decoding, or a
-real GATT connection when you want the full 13-byte characteristic.
+real GATT connection when you want the full 13-byte characteristic — or the
+meter's on-board history, which holds about 17 days at the default interval.
 
 ---
 
@@ -81,6 +82,9 @@ python3 -m venv .venv
 .venv/bin/python python/aranet.py adv-watch         # passive stream
 .venv/bin/python python/aranet.py --json read       # JSON output
 .venv/bin/python python/aranet.py read --fahrenheit
+
+.venv/bin/python python/aranet.py history           # download log → CSV
+.venv/bin/python python/aranet.py history --days 7  # just the last week
 ```
 
 → [Full details](python/README.md)
@@ -110,7 +114,11 @@ PROTOCOL.md   The BLE wire format, reverse-engineered and tagged verified/inferr
 - **Readings only change every `interval`** (300 s by default), so polling faster
   is pointless. Both implementations report `age` so you can tell how fresh the
   data is instead of being misled.
-- The history log is **not** implemented — see [PROTOCOL.md §6](PROTOCOL.md#6-history-log--partially-mapped-).
+- **History timestamps are reconstructed.** The meter stores readings, not
+  clock times: it knows how long ago the newest one was taken and the logging
+  interval, so older entries are counted backwards. They are accurate to a few
+  seconds unless the interval changed or the meter was off (see
+  [PROTOCOL.md §6](PROTOCOL.md).
 
 ## License
 
