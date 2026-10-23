@@ -59,6 +59,30 @@ humidity and pressure graphs (24 h / 7 days / all), plus CSV export. Live
 readings stay advertisement-only, scanned on a 5 s / 20 s duty cycle; the app
 connects briefly and only when you open or refresh the history window.
 
+### History window
+
+Pick **History…** (⌘H) from the menu bar. The window shows the meter's full
+17.5-day ring buffer as stacked CO₂, temperature, humidity and pressure panels,
+with 24 h / 7 days / All ranges, hover readouts, a °C/°F toggle and CSV export.
+The newest snapshot is cached, so it opens instantly and still works when the
+meter is out of range.
+
+![AranetBar history window showing 17.5 days of CO₂, temperature, humidity and pressure](docs/aranetbar-history-all.png)
+
+![The same history window zoomed to the last 24 hours](docs/aranetbar-history-24h.png)
+
+*Sample data from a real Aranet4; serial redacted.*
+
+Headless equivalents, from `swift/`:
+
+```bash
+./aranetbar.swift --history                              # print a summary
+./aranetbar.swift --history --history-csv aranet-history.csv
+./aranetbar.swift --history --history-json aranet-history.json
+./aranetbar.swift --history --history-days 7             # only the last week
+./aranetbar.swift --render-history aranet-history-window.png
+```
+
 → [Full details](swift/README.md)
 
 ## 🐍 Python — aranet.py

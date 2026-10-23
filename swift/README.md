@@ -84,6 +84,8 @@ Pick **History…** from the menu (⌘H). The window shows the last 17.5 days of
 stored readings as four stacked panels, mirroring the Python CLI's history
 chart:
 
+![AranetBar history window](../docs/aranetbar-history-all.png)
+
 - CO₂ with 800/1000 ppm reference lines
 - temperature in °C or °F (follows the menu toggle)
 - humidity
