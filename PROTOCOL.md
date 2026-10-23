@@ -321,6 +321,11 @@ nothing else. New firmware serves history through the `0x61` protocol above.
 four series in about 20 s, joins them by index, and writes CSV or JSON. See the
 [Python README](python/README.md#history).
 
+AranetBar's **History…** window implements the same protocol directly with
+CoreBluetooth, caches the last snapshot in
+`~/Library/Application Support/AranetBar/history.json`, and draws it as four
+stacked charts. See the [Swift README](swift/README.md#history-window).
+
 ## 7. Test vectors
 
 Use these to check any new parser. All are real captures.

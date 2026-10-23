@@ -10,7 +10,7 @@ set -e
 
 APP_NAME="AranetBar"
 BUNDLE_ID="ai.thefocus.aranetbar"
-VERSION="${VERSION:-1.0.0}"
+VERSION="${VERSION:-1.1.0}"
 BUILD_NUMBER="${BUILD_NUMBER:-1}"
 MIN_MACOS="13.0"
 
@@ -23,18 +23,20 @@ mkdir -p "${APP_NAME}.app/Contents/Resources"
 echo "📦 Compiling aranetbar.swift..."
 BIN="${APP_NAME}.app/Contents/MacOS/${APP_NAME}"
 compile_arch() {
-    swiftc -O -target "$1-apple-macosx${MIN_MACOS}" aranetbar.swift -o "$2"
+    swiftc -O -module-cache-path "$PWD/.build/modulecache" \
+        -target "$1-apple-macosx${MIN_MACOS}" aranetbar.swift -o "$2"
 }
 
 # Ship a universal binary so Intel Macs can run it too. Fall back to the host
 # architecture if the other slice cannot be built (e.g. a trimmed SDK).
-rm -rf .build && mkdir -p .build
+rm -rf .build && mkdir -p .build/modulecache
 if compile_arch arm64 .build/arm64 && compile_arch x86_64 .build/x86_64; then
     lipo -create .build/arm64 .build/x86_64 -output "${BIN}"
     echo "   universal binary (arm64 + x86_64)"
 else
     echo "   ⚠️  universal build unavailable, compiling host arch only"
-    swiftc -O -target "$(uname -m)-apple-macosx${MIN_MACOS}" aranetbar.swift -o "${BIN}"
+    swiftc -O -module-cache-path "$PWD/.build/modulecache" \
+        -target "$(uname -m)-apple-macosx${MIN_MACOS}" aranetbar.swift -o "${BIN}"
 fi
 rm -rf .build
 
@@ -74,9 +76,9 @@ cat > "${APP_NAME}.app/Contents/Info.plist" << EOF
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>NSBluetoothAlwaysUsageDescription</key>
-    <string>AranetBar reads your Aranet4's Bluetooth advertisement to show CO2, temperature, humidity and battery in the menu bar. No data leaves your Mac.</string>
+    <string>AranetBar reads your Aranet4's Bluetooth advertisement for live readings and, when you open History, downloads its on-board log. No data leaves your Mac.</string>
     <key>NSBluetoothPeripheralUsageDescription</key>
-    <string>AranetBar reads your Aranet4's Bluetooth advertisement to show its readings in the menu bar.</string>
+    <string>AranetBar reads your Aranet4's Bluetooth advertisement and, on request, its stored history log.</string>
 </dict>
 </plist>
 EOF

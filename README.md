@@ -18,9 +18,9 @@ documented in [PROTOCOL.md](PROTOCOL.md).
 The Aranet4 **broadcasts every measurement in its BLE advertisement**. So you can
 read it without ever opening a connection — which means no battery cost and no
 fighting the Aranet phone app for the BLE link. That is how the menu bar app
-works. The Python client can do either: passive advertisement decoding, or a
-real GATT connection when you want the full 13-byte characteristic — or the
-meter's on-board history, which holds about 17 days at the default interval.
+keeps its live reading. Both clients connect over GATT only when you want the
+full 13-byte characteristic, or the meter's on-board history, which holds about
+17 days at the default interval.
 
 ---
 
@@ -53,9 +53,11 @@ open AranetBar.app
 ```
 
 The menu bar shows a colour-coded dot plus the current CO₂; the dropdown breaks
-out temperature (°C and °F), humidity, pressure, battery, signal and staleness.
-Reads the advertisement only, scans on a 5 s / 20 s duty cycle, and never opens a
-connection.
+out temperature (°C and °F), humidity, pressure, battery, signal and staleness,
+and opens a **history window** with interactive 17-day CO₂, temperature,
+humidity and pressure graphs (24 h / 7 days / all), plus CSV export. Live
+readings stay advertisement-only, scanned on a 5 s / 20 s duty cycle; the app
+connects briefly and only when you open or refresh the history window.
 
 → [Full details](swift/README.md)
 

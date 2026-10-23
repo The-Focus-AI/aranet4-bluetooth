@@ -35,15 +35,19 @@ open AranetBar.app
 ## Features
 
 - 🌡️ **Live readings** — CO₂, temperature (°C and °F), humidity, pressure, battery
-- 🔋 **Zero battery cost** — decodes the BLE advertisement and never opens a
-  connection, so the Aranet phone app keeps working normally
+- 🔋 **Zero battery cost** — decodes the BLE advertisement for live data and only
+  opens a connection when you ask for history, so the Aranet phone app keeps
+  working normally the rest of the time
+- 📈 **History window** — downloads the meter's 17-day ring buffer and draws
+  stacked CO₂, temperature, humidity and pressure graphs (24 h / 7 days / all),
+  with hover readouts, °C/°F toggle and CSV export
 - 🎨 **Colour-coded dot** in the menu bar, using the meter's own CO₂ thresholds
 - 🔍 **Duty-cycled scanning** — 5 s of scanning every 20 s, which is plenty for a
   sensor that only logs every 5 minutes
 - 🌡️ **°C / °F toggle**, remembered between launches
 - 🕒 **Staleness aware** — dims when the last reading is older than expected
 - 🧪 **Testable** — `--once` prints a reading and exits; `--dump-menu` renders the
-  menu as text
+  menu as text; `--history` downloads the log headlessly
 
 ## Usage
 
@@ -69,8 +73,41 @@ TITLE: ●  680
   Signal    -52 dBm
   Measured    57s ago  ·  every 300s
   Show Fahrenheit
+  History…
   Rescan Now
   Quit AranetBar
+```
+
+## History window
+
+Pick **History…** from the menu (⌘H). The window shows the last 17.5 days of
+stored readings as four stacked panels, mirroring the Python CLI's history
+chart:
+
+- CO₂ with 800/1000 ppm reference lines
+- temperature in °C or °F (follows the menu toggle)
+- humidity
+- pressure
+
+Use the **24 h / 7 days / All** control to zoom, hover for a crosshair and a
+readout, **Refresh** to pull a new snapshot, and **Export CSV…** to save it. Each
+panel shows the min–max, average and latest value for the selected range.
+
+The download connects to the meter over GATT (about 10 s for all four series),
+then disconnects. Live menu bar readings are unaffected and remain
+advertisement-only. The latest snapshot is cached in
+`~/Library/Application Support/AranetBar/history.json`, so the window opens
+instantly and still has something to show if the meter is out of range or the
+Aranet phone app is holding the link.
+
+Headless equivalents are useful for scripting:
+
+```bash
+./aranetbar.swift --history                       # print a summary
+./aranetbar.swift --history --history-csv out.csv
+./aranetbar.swift --history --history-json out.json
+./aranetbar.swift --history --history-days 7      # only the last week
+./aranetbar.swift --render-history chart.png      # render the window from cache
 ```
 
 ## Requirements
@@ -78,6 +115,8 @@ TITLE: ●  680
 - macOS 13 or later, Xcode command line tools (`swiftc`)
 - An Aranet4 CO₂ monitor, **paired** with your Mac (System Settings → Bluetooth)
 - Bluetooth permission for the app — granted on first launch
+- History needs the meter to be in range and not connected to another central;
+  the Aranet phone app and AranetBar cannot hold the link at the same time
 
 ## How it works
 
@@ -85,6 +124,13 @@ The meter broadcasts its full reading in the BLE advertisement under company ID
 `0x0702`, so no GATT connection is required. After the 2-byte company ID there is
 an 8-byte header, then the 11-byte reading, then the 2-byte age. In the 24-byte
 blob CoreBluetooth delivers, the reading therefore starts at offset 10.
+
+The history window uses the GATT history protocol in
+[../PROTOCOL.md §6](../PROTOCOL.md#6-history-log--verified-): write `61 <param>
+<start>` to the command characteristic, read pages from `f0cd2005`, join the
+four series by index, and reconstruct timestamps from the meter's `age` and
+`interval`. The download is the same algorithm as the Python CLI, implemented
+with CoreBluetooth.
 
 Full byte-level detail, including the GATT map and test vectors, is in
 [../PROTOCOL.md](../PROTOCOL.md).
@@ -103,9 +149,9 @@ Requires Pillow (`pip install pillow`) and macOS's `iconutil`.
 ## Releasing
 
 ```bash
-VERSION=1.0.0 ./package.sh      # builds the .app and AranetBar-1.0.0.zip
-gh release create v1.0.0 AranetBar-1.0.0.zip \
-    --title "AranetBar 1.0.0" --notes "…"
+VERSION=1.1.0 ./package.sh      # builds the .app and AranetBar-1.1.0.zip
+gh release create v1.1.0 AranetBar-1.1.0.zip \
+    --title "AranetBar 1.1.0" --notes "…"
 ```
 
 `build.sh` compiles a **universal binary** (arm64 + x86_64) and stamps
