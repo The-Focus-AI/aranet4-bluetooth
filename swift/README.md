@@ -45,6 +45,13 @@ open AranetBar.app
 - 🔍 **Duty-cycled scanning** — 5 s of scanning every 20 s, which is plenty for a
   sensor that only logs every 5 minutes
 - 🌡️ **°C / °F toggle**, remembered between launches
+- 🏢 **Multiple meters** — tracks every Aranet it hears separately, follows the
+  one that is actually nearby, and keeps a per-meter history cache; no blended
+  readings or crossed charts when you move between locations
+- 🏷️ **Friendly names** — call a meter “Office” or “Living Room”; the name is
+  stored locally and used in the menu and history window
+- 🔢 **Version in the menu** — the stamped bundle version is shown above Quit,
+  and `--version` prints it for scripts
 - 🕒 **Staleness aware** — dims when the last reading is older than expected
 - 🧪 **Testable** — `--once` prints a reading and exits; `--dump-menu` renders the
   menu as text; `--history` downloads the log headlessly
@@ -56,6 +63,7 @@ open AranetBar.app
 ./aranetbar.swift --verbose     # with logging
 ./aranetbar.swift --once        # print one reading and exit
 ./aranetbar.swift --dump-menu   # print the menu contents and exit
+./aranetbar.swift --version     # print the app version and exit
 ```
 
 The menu bar shows a coloured dot plus the current CO₂ in ppm. Click for the full
@@ -73,10 +81,44 @@ TITLE: ●  680
   Signal    -52 dBm
   Measured    57s ago  ·  every 300s
   Show Fahrenheit
+  Sensor ▸
+  Name Meter…
   History…
   Rescan Now
+  ---
+  AranetBar 1.2.0 (1)
+  ---
   Quit AranetBar
 ```
+
+## Multiple meters
+
+AranetBar can hear more than one Aranet. Each is tracked under its
+CoreBluetooth peripheral identifier, which is stable on a given Mac across
+launches, and only one is active at a time:
+
+- **Automatic (default)** — the app keeps following the current meter until it
+  has been quiet for about 45 seconds, or another meter has been at least
+  8 dBm stronger for 10 seconds. The threshold and dwell time are deliberate:
+  two meters at similar range must not make the menu bar flap between readings.
+- **Pinned** — open **Sensor ▸** and pick a meter to stay on it while several are
+  audible. The pin is released automatically after about a minute out of range,
+  so carrying the Mac to another location still picks up the meter that is
+  actually there. **Automatic** clears the pin.
+- **Named** — choose **Name Meter…** and give the active meter a place name such
+  as “Office” or “Living Room”. The alias is stored locally against that meter’s
+  Bluetooth identifier, survives restarts, and is used in the menu header, the
+  Sensor submenu and the history window. Leave the field blank to go back to the
+  name the meter advertises. If two meters end up with the same name, a short
+  identifier suffix keeps them apart. Forgetting/unpairing a meter can make macOS
+  assign a new identifier, in which case its alias is not carried over.
+- The menu header names the active meter and, when there are several, shows how
+  many are nearby.
+
+History follows the active meter. Each snapshot is cached separately as
+`history-<identifier>.json`; switching meters swaps the graph (or shows "no
+history for this meter yet" and downloads it if the window is open). A snapshot
+from one meter is never shown as another's.
 
 ## History window
 
@@ -100,10 +142,16 @@ average and latest value for the visible range.
 
 The download connects to the meter over GATT (about 10 s for all four series),
 then disconnects. Live menu bar readings are unaffected and remain
-advertisement-only. The latest snapshot is cached in
-`~/Library/Application Support/AranetBar/history.json`, so the window opens
-instantly and still has something to show if the meter is out of range or the
-Aranet phone app is holding the link.
+advertisement-only. The latest snapshot is cached per meter in
+`~/Library/Application Support/AranetBar/history-<identifier>.json`, so the
+window opens instantly and still has something to show if that meter is out of
+range or the Aranet phone app is holding the link. A snapshot from another
+meter is never substituted.
+
+Upgrading from a build that used a single `history.json` starts with an empty
+per-meter cache; the History window downloads a fresh snapshot the first time it
+opens. The old file is still read by `--render-history`, but it is never
+attributed to a meter.
 
 Headless equivalents are useful for scripting:
 
@@ -112,7 +160,7 @@ Headless equivalents are useful for scripting:
 ./aranetbar.swift --history --history-csv aranet-history.csv
 ./aranetbar.swift --history --history-json aranet-history.json
 ./aranetbar.swift --history --history-days 7      # only the last week
-./aranetbar.swift --render-history aranet-history-window.png  # render from cache
+./aranetbar.swift --render-history aranet-history-window.png  # newest cached meter
 ```
 
 ## Requirements
@@ -158,9 +206,9 @@ Requires Pillow (`pip install pillow`) and macOS's `iconutil`.
 ## Releasing
 
 ```bash
-VERSION=1.1.3 ./package.sh      # builds the .app and AranetBar-1.1.3.zip
-gh release create v1.1.3 AranetBar-1.1.3.zip \
-    --title "AranetBar 1.1.3" --notes "…"
+VERSION=1.2.0 ./package.sh      # builds the .app and AranetBar-1.2.0.zip
+gh release create v1.2.0 AranetBar-1.2.0.zip \
+    --title "AranetBar 1.2.0" --notes "…"
 ```
 
 `build.sh` compiles a **universal binary** (arm64 + x86_64) and stamps

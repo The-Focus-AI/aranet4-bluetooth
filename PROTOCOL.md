@@ -322,9 +322,9 @@ four series in about 20 s, joins them by index, and writes CSV or JSON. See the
 [Python README](python/README.md#history).
 
 AranetBar's **History…** window implements the same protocol directly with
-CoreBluetooth, caches the last snapshot in
-`~/Library/Application Support/AranetBar/history.json`, and draws it as four
-stacked charts. See the [Swift README](swift/README.md#history-window).
+CoreBluetooth, caches one snapshot per meter in
+`~/Library/Application Support/AranetBar/history-<identifier>.json`, and draws
+it as four stacked charts. See the [Swift README](swift/README.md#history-window).
 
 ## 7. Test vectors
 

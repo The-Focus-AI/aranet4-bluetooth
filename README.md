@@ -63,6 +63,14 @@ humidity and pressure graphs (24 h / 7 days / all), plus CSV export. Live
 readings stay advertisement-only, scanned on a 5 s / 20 s duty cycle; the app
 connects briefly and only when you open or refresh the history window.
 
+If you use the app in more than one place, it tracks each Aranet separately. It
+follows the meter that is actually nearby — switching after the old one goes
+quiet or another one is clearly stronger — and keeps a separate history cache
+for each. Moving between an office and a home meter therefore never blends
+their readings or graphs. You can give each meter a friendly name (“Office”,
+“Living Room”) from **Name Meter…**; it is stored locally and used in the menu
+and history window.
+
 ### History window
 
 Pick **History…** (⌘H) from the menu bar. The window shows the meter's full
@@ -70,8 +78,8 @@ Pick **History…** (⌘H) from the menu bar. The window shows the meter's full
 with 24 h / 7 days / All ranges, hover readouts, a °C/°F toggle and CSV export.
 Scroll the mouse wheel (or pinch) over the chart to zoom around the cursor,
 scroll left/right to pan through time, and double-click to reset. The newest
-snapshot is cached, so it opens instantly and still works when the meter is out
-of range.
+snapshot is cached per meter, so it opens instantly and still works when the
+meter is out of range.
 
 ![AranetBar history window showing 17.5 days of CO₂, temperature, humidity and pressure](docs/aranetbar-history-all.png)
 

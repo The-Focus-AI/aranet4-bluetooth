@@ -14,6 +14,7 @@
 //   ./aranetbar.swift --verbose      # run with logging
 //   ./aranetbar.swift --once         # print one reading and exit (for testing)
 //   ./aranetbar.swift --dump-menu    # render the menu as text and exit
+//   ./aranetbar.swift --version      # print the app version and exit
 //   ./aranetbar.swift --history      # download the log headlessly
 //   ./aranetbar.swift --history --history-csv out.csv --history-json out.json
 //   ./aranetbar.swift --history --history-days 7
@@ -245,26 +246,101 @@ enum HistoryStore {
         return base.appendingPathComponent("AranetBar", isDirectory: true)
     }
 
-    static var fileURL: URL { directoryURL.appendingPathComponent("history.json") }
-
-    static func load() -> HistorySnapshot? {
-        guard let data = try? Data(contentsOf: fileURL) else { return nil }
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        return try? decoder.decode(HistorySnapshot.self, from: data)
+    /// One cache file per meter. A meter is identified by its CoreBluetooth
+    /// peripheral identifier, which is stable on this Mac across launches and
+    /// keeps two Aranets from overwriting each other's history.
+    static func fileURL(for sensorKey: String) -> URL {
+        let safe = sensorKey.unicodeScalars.map { scalar -> Character in
+            let allowed = CharacterSet.alphanumerics.contains(scalar)
+                || scalar == "-" || scalar == "_"
+            return allowed ? Character(scalar) : "_"
+        }
+        return directoryURL.appendingPathComponent("history-\(String(safe)).json")
     }
 
-    static func save(_ snapshot: HistorySnapshot) {
+    static func load(for sensorKey: String) -> HistorySnapshot? {
+        decode(fileURL(for: sensorKey))
+    }
+
+    /// Used by `--render-history`. Includes the pre-multi-meter `history.json`
+    /// so an upgraded install can still render its old cache, but that file is
+    /// never loaded as the cache for a specific meter.
+    static func loadMostRecent() -> HistorySnapshot? {
+        let files = (try? FileManager.default.contentsOfDirectory(
+            at: directoryURL, includingPropertiesForKeys: nil
+        )) ?? []
+        return files
+            .filter { $0.lastPathComponent.hasPrefix("history") && $0.pathExtension == "json" }
+            .compactMap(decode)
+            .max { $0.downloadedAt < $1.downloadedAt }
+    }
+
+    static func save(_ snapshot: HistorySnapshot, for sensorKey: String) {
         do {
             try FileManager.default.createDirectory(
                 at: directoryURL, withIntermediateDirectories: true
             )
             let encoder = JSONEncoder()
             encoder.dateEncodingStrategy = .iso8601
-            try encoder.encode(snapshot).write(to: fileURL, options: .atomic)
+            try encoder.encode(snapshot).write(
+                to: fileURL(for: sensorKey), options: .atomic
+            )
         } catch {
             NSLog("AranetBar: could not save history: \(error.localizedDescription)")
         }
+    }
+
+    private static func decode(_ url: URL) -> HistorySnapshot? {
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return try? decoder.decode(HistorySnapshot.self, from: data)
+    }
+}
+
+// MARK: - Meters
+
+/// What we know about one Aranet that has advertised recently. Kept separately
+/// per meter so a passing second sensor can never overwrite the live reading or
+/// another sensor's cached history.
+struct SensorRecord {
+    let key: String
+    var peripheral: CBPeripheral
+    var name: String?
+    var reading: AranetReading
+    var lastSeen: Date
+    /// When this meter first started beating the active one by a clear margin.
+    /// Used as a dwell timer so RSSI jitter cannot make the menu flap.
+    var strongerSince: Date?
+
+    var label: String {
+        guard let name, !name.isEmpty else { return "Aranet4 \(key.suffix(4))" }
+        return name
+    }
+}
+
+/// User-assigned names ("Office", "Living Room") for meters. These are local
+/// aliases only; the meter's advertised Bluetooth name is never changed. Stored
+/// under the same stable peripheral identifier as the history cache.
+enum SensorNames {
+    private static let defaultsKey = "sensorNames"
+
+    static func all() -> [String: String] {
+        UserDefaults.standard.dictionary(forKey: defaultsKey) as? [String: String] ?? [:]
+    }
+
+    static func name(for sensorKey: String) -> String? {
+        all()[sensorKey]
+    }
+
+    static func setName(_ name: String?, for sensorKey: String) {
+        var names = all()
+        if let name, !name.isEmpty {
+            names[sensorKey] = name
+        } else {
+            names.removeValue(forKey: sensorKey)
+        }
+        UserDefaults.standard.set(names, forKey: defaultsKey)
     }
 }
 
@@ -316,6 +392,9 @@ protocol HistoryDownloaderDelegate: AnyObject {
 /// stays advertisement-only.
 final class HistoryDownloader: NSObject, CBPeripheralDelegate {
     let peripheral: CBPeripheral
+    /// Which meter this download belongs to. The result is cached under this
+    /// key even if the active meter changes while the radio is busy.
+    let sensorKey: String
     private weak var central: CBCentralManager?
     private weak var delegate: HistoryDownloaderDelegate?
     private let requestedDays: Double?
@@ -338,11 +417,13 @@ final class HistoryDownloader: NSObject, CBPeripheralDelegate {
     init(
         peripheral: CBPeripheral,
         central: CBCentralManager,
+        sensorKey: String,
         days: Double?,
         delegate: HistoryDownloaderDelegate?
     ) {
         self.peripheral = peripheral
         self.central = central
+        self.sensorKey = sensorKey
         self.requestedDays = days
         self.delegate = delegate
         super.init()
@@ -1125,7 +1206,7 @@ final class HistoryChartView: NSView {
         needsDisplay = true
     }
 
-    private func resetZoom() {
+    func resetZoom() {
         guard zoomedRange != nil else { return }
         zoomedRange = nil
         hoverDate = nil
@@ -1735,11 +1816,17 @@ final class HistoryWindowController: NSWindowController, NSWindowDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    func update(snapshot: HistorySnapshot?) {
+    func update(snapshot: HistorySnapshot?, deviceLabel: String? = nil) {
         self.snapshot = snapshot
         chartView.snapshot = snapshot
         guard let snapshot else {
-            subtitleLabel.stringValue = "No history downloaded yet"
+            let label = deviceLabel
+            subtitleLabel.stringValue = label.map { "No history downloaded for \($0) yet" }
+                ?? "No history downloaded yet"
+            window?.title = label.map { "AranetBar History — \($0)" }
+                ?? "AranetBar History"
+            chartView.statusMessage = label.map { "No history for \($0) yet" }
+                ?? "No history yet"
             return
         }
 
@@ -1753,13 +1840,14 @@ final class HistoryWindowController: NSWindowController, NSWindowDelegate {
         }
         let minutes = snapshot.intervalSeconds / 60
         let intervalText = minutes > 0 ? "every \(minutes) min" : "every \(snapshot.intervalSeconds) s"
-        var parts = [snapshot.deviceName]
+        let label = deviceLabel ?? snapshot.deviceName
+        var parts = [label]
         if !dateText.isEmpty { parts.append(dateText) }
         parts.append("\(snapshot.samples.count.formatted()) readings \(intervalText)")
         if !snapshot.serial.isEmpty { parts.append("SN \(snapshot.serial)") }
         if !snapshot.firmware.isEmpty { parts.append("fw \(snapshot.firmware)") }
         subtitleLabel.stringValue = parts.joined(separator: " · ")
-        window?.title = "AranetBar History — \(snapshot.deviceName)"
+        window?.title = "AranetBar History — \(label)"
         chartView.statusMessage = snapshot.samples.isEmpty
             ? "No readings stored on the meter yet"
             : "No history yet"
@@ -1768,6 +1856,13 @@ final class HistoryWindowController: NSWindowController, NSWindowDelegate {
     func setRange(_ range: HistoryRange) {
         rangeControl.selectedSegment = range.rawValue
         chartView.range = range
+    }
+
+    /// Drop any scroll/pinch zoom but keep the chosen 24 h / 7 days / All preset.
+    /// Used when the window switches to a different meter's history.
+    func resetZoom() {
+        chartView.resetZoom()
+        rangeControl.selectedSegment = chartView.range.rawValue
     }
 
     func setTemperatureUnit(_ fahrenheit: Bool) {
@@ -1860,6 +1955,16 @@ final class AranetBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate, CBCen
     private var reading: AranetReading?
     private var deviceName: String?
     private var peripheral: CBPeripheral?
+
+    // Every meter heard recently, keyed by its stable CoreBluetooth identifier.
+    // Only `activeSensorKey` may update the menu bar or the history window.
+    private var sensors: [String: SensorRecord] = [:]
+    private var activeSensorKey: String?
+    /// Set when the user picks a meter from the Sensor menu. It is released
+    /// automatically if that meter goes away, so moving to another room or
+    /// building still follows the meter that is actually there.
+    private var pinnedSensorKey: String?
+
     private var verbose = false
     private var oneshot = false
     private var dumpMenu = false
@@ -1889,9 +1994,33 @@ final class AranetBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate, CBCen
     private var ticker: Timer?
     private var onceTimeout: Timer?
 
+    // Meter switching. We keep following the current meter until it has been
+    // quiet for a while, or another one has been clearly stronger for long
+    // enough that it cannot just be radio jitter.
+    private let sensorAbsenceGrace: TimeInterval = 45
+    private let sensorSwitchMargin = 8  // dBm
+    private let sensorSwitchDwell: TimeInterval = 10
+    private let sensorSwitchRecency: TimeInterval = 30
+    private let sensorRecentWindow: TimeInterval = 75
+    private let sensorPinReleaseGrace: TimeInterval = 60
+
     private var useFahrenheit: Bool {
         get { UserDefaults.standard.bool(forKey: "useFahrenheit") }
         set { UserDefaults.standard.set(newValue, forKey: "useFahrenheit") }
+    }
+
+    /// The bundle's stamped version (build.sh writes it into Info.plist). When
+    /// the source is run directly with `swift aranetbar.swift`, there is no
+    /// bundle, so say so instead of inventing a version.
+    private var versionText: String {
+        let info = Bundle.main.infoDictionary
+        let short = (info?["CFBundleShortVersionString"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let build = (info?["CFBundleVersion"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let short, !short.isEmpty else { return "development build" }
+        guard let build, !build.isEmpty else { return short }
+        return "\(short) (\(build))"
     }
 
     // MARK: Lifecycle
@@ -1914,14 +2043,20 @@ final class AranetBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate, CBCen
             }
         }
         historyDays = argumentValue("--history-days", in: args).flatMap(Double.init)
-        cachedHistory = HistoryStore.load()
+        if args.contains("--version") || args.contains("-V") {
+            print("AranetBar \(versionText)")
+            exit(0)
+        }
+        // Do not preload a cache before we know which meter is in front of us;
+        // `activateSensor` loads the right file as soon as one advertises.
+        cachedHistory = nil
 
         log("🚀 aranetbar starting")
 
         // A cache-only render is handy for docs and for checking the chart
         // without waking the meter.
         if let path = historyRenderPath, !headlessHistory {
-            guard let snapshot = cachedHistory else {
+            guard let snapshot = HistoryStore.loadMostRecent() else {
                 FileHandle.standardError.write(Data("No cached history to render.\n".utf8))
                 exit(1)
             }
@@ -1956,8 +2091,10 @@ final class AranetBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate, CBCen
                 exit(1)
             }
         } else {
-            // Re-render periodically so staleness is reflected in the title.
+            // Re-render periodically so staleness is reflected in the title, and
+            // let the active meter time out if it has gone out of range.
             ticker = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
+                self?.reevaluateSensorChoice()
                 self?.updateTitle()
             }
             if showHistoryOnLaunch {
@@ -2074,10 +2211,42 @@ final class AranetBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate, CBCen
             rssi: RSSI.intValue
         ) else { return }
 
+        let key = peripheral.identifier.uuidString
+        let now = Date()
         let name = (advertisementData[CBAdvertisementDataLocalNameKey] as? String) ?? peripheral.name
-        if let name, !name.isEmpty { deviceName = name }
-        self.peripheral = peripheral
 
+        // Remember every meter separately. The advertisement does not carry the
+        // serial number, so the CoreBluetooth identifier is the stable identity
+        // we can use without connecting.
+        if var record = sensors[key] {
+            // Do not let a dwell timer survive a long gap between sightings.
+            if now.timeIntervalSince(record.lastSeen) > sensorSwitchRecency {
+                record.strongerSince = nil
+            }
+            record.peripheral = peripheral
+            if let name, !name.isEmpty { record.name = name }
+            record.reading = parsed
+            record.lastSeen = now
+            sensors[key] = record
+        } else {
+            sensors[key] = SensorRecord(
+                key: key, peripheral: peripheral, name: name, reading: parsed,
+                lastSeen: now, strongerSince: nil
+            )
+        }
+
+        if activeSensorKey == nil {
+            activateSensor(key, reason: "first meter seen")
+        } else if key != activeSensorKey {
+            evaluateSensorCandidate(key)
+        }
+
+        // Advertisements from other meters still update their record above,
+        // but they must not move the menu bar or touch the history snapshot.
+        guard key == activeSensorKey else { return }
+
+        deviceName = sensorLabel(for: key)
+        self.peripheral = peripheral
         let previous = reading
         reading = parsed
 
@@ -2157,6 +2326,177 @@ final class AranetBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate, CBCen
         historyDownloader?.didDisconnect(error)
     }
 
+    // MARK: Meter selection
+
+    private func sensorLabel(for key: String) -> String {
+        guard let record = sensors[key] else { return "Aranet4" }
+        let names = SensorNames.all()
+        let base = names[key] ?? record.label
+        // Two meters can report the same advertised name (or be given the same
+        // alias). Add a short suffix so the menu and history window never claim
+        // they are the same device.
+        let duplicate = recentSensors().contains { other in
+            other.key != key && (names[other.key] ?? other.label) == base
+        }
+        return duplicate ? "\(base) · \(key.suffix(4))" : base
+    }
+
+    private func recentSensors() -> [SensorRecord] {
+        let cutoff = Date().addingTimeInterval(-sensorRecentWindow)
+        return sensors.values
+            .filter {
+                $0.lastSeen >= cutoff || $0.key == activeSensorKey || $0.key == pinnedSensorKey
+            }
+            .sorted { lhs, rhs in
+                if lhs.reading.rssi != rhs.reading.rssi {
+                    return lhs.reading.rssi > rhs.reading.rssi
+                }
+                if lhs.lastSeen != rhs.lastSeen { return lhs.lastSeen > rhs.lastSeen }
+                return lhs.key < rhs.key
+            }
+    }
+
+    private func bestRecentSensor(excluding key: String? = nil) -> SensorRecord? {
+        recentSensors().first { $0.key != key }
+    }
+
+    /// A new advertisement arrived from a meter that is not the active one.
+    private func evaluateSensorCandidate(_ key: String) {
+        guard historyDownloader == nil else { return }
+        guard let state = sensors[key] else { return }
+
+        if let pinned = pinnedSensorKey {
+            if pinned == key { activateSensor(key, reason: "pinned meter is back") }
+            return
+        }
+        guard let activeKey = activeSensorKey,
+              let active = sensors[activeKey] else {
+            activateSensor(key, reason: "strongest meter")
+            return
+        }
+
+        let now = Date()
+        let stronger = state.reading.rssi >= active.reading.rssi + sensorSwitchMargin
+        guard stronger else {
+            sensors[key]?.strongerSince = nil
+            return
+        }
+
+        // The meter we were following has gone quiet: switch promptly.
+        if now.timeIntervalSince(active.lastSeen) > sensorAbsenceGrace {
+            activateSensor(key, reason: "previous meter went quiet")
+            return
+        }
+
+        // Otherwise require a clear, sustained signal advantage. Without this,
+        // two meters at similar range make the menu bar flip between readings.
+        if sensors[key]?.strongerSince == nil {
+            sensors[key]?.strongerSince = now
+            return
+        }
+        if let since = sensors[key]?.strongerSince,
+           now.timeIntervalSince(since) >= sensorSwitchDwell {
+            activateSensor(key, reason: "strongest signal")
+        }
+    }
+
+    /// Called from the 5 s ticker, so absence and pin expiry are noticed even
+    /// when the other meter is not advertising during a scan window.
+    private func reevaluateSensorChoice() {
+        // A history download deliberately stops scanning. Without this guard,
+        // every meter would look "gone" after 45 s and a slow download could
+        // switch meters out from under the user.
+        guard historyDownloader == nil else { return }
+        // With the radio off nothing can advertise; do not interpret silence
+        // as "the meter moved away" and hop to a stale record.
+        guard let central, central.state == .poweredOn else { return }
+
+        let now = Date()
+
+        if let pinned = pinnedSensorKey {
+            if let record = sensors[pinned],
+               now.timeIntervalSince(record.lastSeen) <= sensorPinReleaseGrace {
+                if activeSensorKey != pinned {
+                    activateSensor(pinned, reason: "pinned meter")
+                }
+                return
+            }
+            pinnedSensorKey = nil
+            log("📍 pinned meter went away; following the nearest one again")
+        }
+
+        guard let activeKey = activeSensorKey,
+              let active = sensors[activeKey] else {
+            if let best = bestRecentSensor() {
+                activateSensor(best.key, reason: "strongest recent meter")
+            }
+            return
+        }
+
+        guard now.timeIntervalSince(active.lastSeen) > sensorAbsenceGrace else { return }
+        if let best = bestRecentSensor(excluding: activeKey),
+           best.lastSeen > active.lastSeen,
+           now.timeIntervalSince(best.lastSeen) <= sensorSwitchRecency
+        {
+            // Only follow a meter that has actually been heard more recently.
+            // If both went out of range together, keep showing the one we had
+            // rather than hopping to the other stale record. The recency limit
+            // also ignores a meter that merely passed by.
+            activateSensor(best.key, reason: "previous meter went quiet")
+        }
+    }
+
+    private func activateSensor(_ key: String, reason: String) {
+        guard let record = sensors[key] else { return }
+        // Already following this meter. Return early so selecting it again (or
+        // re-seeing it) cannot interrupt an in-flight history download.
+        guard activeSensorKey != key else { return }
+
+        activeSensorKey = key
+        peripheral = record.peripheral
+        reading = record.reading
+        deviceName = sensorLabel(for: key)
+        lastLoggedSignature = nil
+        for candidate in Array(sensors.keys) {
+            sensors[candidate]?.strongerSince = nil
+        }
+
+        let label = sensorLabel(for: key)
+        let cached = HistoryStore.load(for: key)
+        cachedHistory = cached
+        pendingHistoryRefresh = false
+        historyController?.resetZoom()
+        historyController?.update(snapshot: cached, deviceLabel: label)
+        historyController?.setLoading(false)
+        if cached == nil {
+            historyController?.setStatus(
+                "No history downloaded for \(label) yet.", isError: false
+            )
+        } else if let cached {
+            historyController?.setStatus(
+                "Following \(label) · updated \(Self.relativeTime(cached.downloadedAt))",
+                isError: false
+            )
+        }
+
+        // Never let a download for the previous meter keep holding the link, or
+        // deliver its snapshot into this meter's window.
+        if let downloader = historyDownloader, downloader.sensorKey != key {
+            historyDownloader = nil
+            downloader.cancel()
+        }
+
+        updateTitle()
+        log("📶 following \(label) (\(reason)); \(recentSensors().count) meter(s) nearby")
+
+        if let controller = historyController,
+           controller.window?.isVisible == true,
+           cached == nil || Date().timeIntervalSince(cached!.downloadedAt) > 120
+        {
+            refreshHistory()
+        }
+    }
+
     // MARK: Scanning
 
     private func startScanCycle() {
@@ -2194,7 +2534,10 @@ final class AranetBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate, CBCen
     private func historyWindow() -> HistoryWindowController {
         if let historyController { return historyController }
         let controller = HistoryWindowController()
-        controller.update(snapshot: cachedHistory)
+        controller.update(
+            snapshot: cachedHistory,
+            deviceLabel: activeSensorKey.map { sensorLabel(for: $0) }
+        )
         controller.onRefresh = { [weak self] in self?.refreshHistory() }
         controller.onTemperatureUnitChanged = { [weak self] fahrenheit in
             self?.log("🌡 fahrenheit = \(fahrenheit)")
@@ -2207,10 +2550,11 @@ final class AranetBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate, CBCen
         let controller = historyWindow()
         controller.present()
 
+        let label = activeSensorKey.map { sensorLabel(for: $0) } ?? "the meter"
         if let cached = cachedHistory {
             if Date().timeIntervalSince(cached.downloadedAt) <= 120 {
                 controller.setStatus(
-                    "Updated \(Self.relativeTime(cached.downloadedAt)) · "
+                    "\(label) · updated \(Self.relativeTime(cached.downloadedAt)) · "
                         + "\(cached.samples.count.formatted()) readings",
                     isError: false
                 )
@@ -2233,7 +2577,7 @@ final class AranetBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate, CBCen
             }
             return
         }
-        guard peripheral != nil else {
+        guard activeSensorKey != nil, peripheral != nil else {
             pendingHistoryRefresh = true
             historyController?.setLoading(true, message: "Looking for your Aranet4…")
             beginScan()
@@ -2245,18 +2589,19 @@ final class AranetBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate, CBCen
 
     private func beginHistoryDownload() {
         guard historyDownloader == nil,
+              let sensorKey = activeSensorKey,
               let peripheral,
               let central,
               central.state == .poweredOn
         else { return }
 
         endScan()
-        historyController?.setLoading(
-            true, message: "Connecting to \(deviceName ?? "the meter")…"
-        )
+        let label = sensorLabel(for: sensorKey)
+        historyController?.setLoading(true, message: "Connecting to \(label)…")
         let downloader = HistoryDownloader(
             peripheral: peripheral,
             central: central,
+            sensorKey: sensorKey,
             days: historyDays,
             delegate: self
         )
@@ -2264,18 +2609,34 @@ final class AranetBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate, CBCen
         downloader.start()
     }
 
-    private func handleHistoryResult(_ result: Result<HistorySnapshot, Error>) {
-        historyDownloader = nil
+    private func handleHistoryResult(
+        _ result: Result<HistorySnapshot, Error>, from downloader: HistoryDownloader
+    ) {
+        if historyDownloader === downloader { historyDownloader = nil }
+
+        let key = downloader.sensorKey
+        let isActive = key == activeSensorKey
         onceTimeout?.invalidate()
 
         switch result {
         case .success(let snapshot):
-            cachedHistory = snapshot
             if historyDays == nil {
-                HistoryStore.save(snapshot)
+                HistoryStore.save(snapshot, for: key)
             }
 
-            historyController?.update(snapshot: snapshot)
+            // The active meter changed while this download was in flight. Keep
+            // the snapshot for the meter it came from, but do not put it in the
+            // window that is now following a different meter.
+            guard isActive else {
+                log("📦 cached history for \(sensorLabel(for: key)); it is no longer active")
+                beginScan()
+                return
+            }
+
+            cachedHistory = snapshot
+            historyController?.update(
+                snapshot: snapshot, deviceLabel: sensorLabel(for: key)
+            )
             historyController?.setLoading(false)
             let warningSuffix = snapshot.warnings.isEmpty
                 ? ""
@@ -2300,6 +2661,11 @@ final class AranetBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate, CBCen
             beginScan()
 
         case .failure(let error):
+            guard isActive else {
+                log("🗑 discarded a history failure from a meter we no longer follow")
+                beginScan()
+                return
+            }
             historyController?.setLoading(false)
             historyController?.setStatus(error.localizedDescription, isError: true)
 
@@ -2423,10 +2789,19 @@ final class AranetBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate, CBCen
     }
 
     private func populate(_ menu: NSMenu) {
-        // Header
+        // Header. When more than one meter is in range, say so: the readings
+        // below always come from exactly one of them, never a blend.
+        let nearby = recentSensors()
+        let nearbyCount = nearby.filter {
+            Date().timeIntervalSince($0.lastSeen) <= sensorRecentWindow
+        }.count
+        let currentName = activeSensorKey.map { sensorLabel(for: $0) } ?? deviceName
+        var headerText = "ARANET4 · \(currentName ?? "searching…")"
+        if nearbyCount > 1 { headerText += "  ·  \(nearbyCount) nearby" }
+        if pinnedSensorKey != nil { headerText += "  ·  pinned" }
         let header = NSMenuItem()
         header.attributedTitle = NSAttributedString(
-            string: "ARANET4 · \(deviceName ?? "searching…")",
+            string: headerText,
             attributes: [
                 .foregroundColor: NSColor.labelColor,
                 .font: NSFont.systemFont(ofSize: 12, weight: .semibold),
@@ -2472,6 +2847,15 @@ final class AranetBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate, CBCen
         fahrenheit.state = useFahrenheit ? .on : .off
         menu.addItem(fahrenheit)
 
+        addSensorMenu(to: menu)
+
+        let nameMeter = NSMenuItem(
+            title: "Name Meter…", action: #selector(renameActiveSensor), keyEquivalent: ""
+        )
+        nameMeter.target = self
+        nameMeter.isEnabled = activeSensorKey != nil
+        menu.addItem(nameMeter)
+
         let history = NSMenuItem(
             title: "History…", action: #selector(showHistory), keyEquivalent: "h"
         )
@@ -2484,9 +2868,57 @@ final class AranetBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate, CBCen
 
         menu.addItem(.separator())
 
+        let version = NSMenuItem(
+            title: "AranetBar \(versionText)", action: nil, keyEquivalent: ""
+        )
+        version.isEnabled = false
+        menu.addItem(version)
+
+        menu.addItem(.separator())
+
         let quit = NSMenuItem(title: "Quit AranetBar", action: #selector(quit), keyEquivalent: "q")
         quit.target = self
         menu.addItem(quit)
+    }
+
+    /// Let the user pin one meter when several are audible. Automatic mode is
+    /// the default: follow whichever meter is actually nearby, with hysteresis.
+    private func addSensorMenu(to menu: NSMenu) {
+        let root = NSMenuItem(title: "Sensor", action: nil, keyEquivalent: "")
+        let submenu = NSMenu()
+        submenu.autoenablesItems = false
+
+        let automatic = NSMenuItem(
+            title: "Automatic (follow the nearest)",
+            action: #selector(selectAutomaticSensor),
+            keyEquivalent: ""
+        )
+        automatic.target = self
+        automatic.state = pinnedSensorKey == nil ? .on : .off
+        submenu.addItem(automatic)
+        submenu.addItem(.separator())
+
+        let nearby = recentSensors()
+        if nearby.isEmpty {
+            let none = NSMenuItem(title: "No meters seen yet", action: nil, keyEquivalent: "")
+            none.isEnabled = false
+            submenu.addItem(none)
+        } else {
+            for record in nearby {
+                let title = "\(sensorLabel(for: record.key))  ·  "
+                    + "\(record.reading.co2) ppm  ·  \(record.reading.rssi) dBm"
+                let item = NSMenuItem(
+                    title: title, action: #selector(selectSensor(_:)), keyEquivalent: ""
+                )
+                item.target = self
+                item.representedObject = record.key
+                item.state = record.key == activeSensorKey ? .on : .off
+                submenu.addItem(item)
+            }
+        }
+
+        root.submenu = submenu
+        menu.addItem(root)
     }
 
     /// A non-clickable data row that keeps its colours (hence isEnabled = true
@@ -2571,6 +3003,74 @@ final class AranetBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate, CBCen
         beginScan()
     }
 
+    @objc private func selectSensor(_ sender: NSMenuItem) {
+        guard let key = sender.representedObject as? String, sensors[key] != nil else { return }
+        pinnedSensorKey = key
+        activateSensor(key, reason: "chosen from the Sensor menu")
+        log("📌 pinned \(sensorLabel(for: key))")
+    }
+
+    @objc private func selectAutomaticSensor() {
+        pinnedSensorKey = nil
+        // Let the normal rules decide; they already ignore meters that have not
+        // been heard recently, which is safer than picking the last RSSI value.
+        reevaluateSensorChoice()
+        let label = activeSensorKey.map { sensorLabel(for: $0) } ?? "the nearest meter"
+        log("📍 following \(label) automatically")
+    }
+
+    @objc private func renameActiveSensor() {
+        guard let key = activeSensorKey, let record = sensors[key] else {
+            NSSound.beep()
+            return
+        }
+
+        let alert = NSAlert()
+        alert.alertStyle = .informational
+        alert.messageText = "Name This Meter"
+        alert.informativeText = "Use a place or room name, such as “Office” or "
+            + "“Living Room”. Leave it blank to use the Bluetooth name "
+            + "(\(record.label))."
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
+        field.stringValue = SensorNames.name(for: key) ?? ""
+        field.placeholderString = record.label
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        let name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        SensorNames.setName(name.isEmpty ? nil : name, for: key)
+        applyMeterName()
+        log("✏️ meter \(record.label) is now \(sensorLabel(for: key))")
+    }
+
+    /// Re-label the menu and history window after a rename, without reloading
+    /// the chart or disturbing an in-flight download.
+    private func applyMeterName() {
+        guard let key = activeSensorKey else { return }
+        let label = sensorLabel(for: key)
+        deviceName = label
+        if historyDownloader == nil {
+            historyController?.update(snapshot: cachedHistory, deviceLabel: label)
+            if let cached = cachedHistory {
+                historyController?.setStatus(
+                    "Following \(label) · updated \(Self.relativeTime(cached.downloadedAt))",
+                    isError: false
+                )
+            } else {
+                historyController?.setStatus(
+                    "No history downloaded for \(label) yet.", isError: false
+                )
+            }
+        }
+        updateTitle()
+    }
+
     @objc private func quit() {
         NSApplication.shared.terminate(nil)
     }
@@ -2629,7 +3129,7 @@ extension AranetBarApp: HistoryDownloaderDelegate {
         didFinish result: Result<HistorySnapshot, Error>
     ) {
         DispatchQueue.main.async { [weak self] in
-            self?.handleHistoryResult(result)
+            self?.handleHistoryResult(result, from: downloader)
         }
     }
 

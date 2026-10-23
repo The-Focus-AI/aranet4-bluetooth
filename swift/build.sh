@@ -10,7 +10,7 @@ set -e
 
 APP_NAME="AranetBar"
 BUNDLE_ID="ai.thefocus.aranetbar"
-VERSION="${VERSION:-1.1.3}"
+VERSION="${VERSION:-1.2.0}"
 BUILD_NUMBER="${BUILD_NUMBER:-1}"
 MIN_MACOS="13.0"
 
