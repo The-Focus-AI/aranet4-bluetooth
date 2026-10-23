@@ -40,7 +40,7 @@ open AranetBar.app
   working normally the rest of the time
 - 📈 **History window** — downloads the meter's 17-day ring buffer and draws
   stacked CO₂, temperature, humidity and pressure graphs (24 h / 7 days / all),
-  with hover readouts, scroll-to-zoom, °C/°F toggle and CSV export
+  with hover readouts, scroll-to-zoom and pan, °C/°F toggle and CSV export
 - 🎨 **Colour-coded dot** in the menu bar, using the meter's own CO₂ thresholds
 - 🔍 **Duty-cycled scanning** — 5 s of scanning every 20 s, which is plenty for a
   sensor that only logs every 5 minutes
@@ -92,10 +92,11 @@ chart:
 - pressure
 
 Use the **24 h / 7 days / All** control for preset spans, or scroll the mouse
-wheel (or pinch) over the chart to zoom around the cursor; double-click to reset.
-While zoomed, the range control is deselected. Hover for a crosshair and a
-readout, **Refresh** to pull a new snapshot, and **Export CSV…** to save it. Each
-panel shows the min–max, average and latest value for the visible range.
+wheel (or pinch) over the chart to zoom around the cursor. Scroll left/right to
+pan through time; double-click to reset. While zoomed or panned, the range
+control is deselected. Hover for a crosshair and a readout, **Refresh** to pull a
+new snapshot, and **Export CSV…** to save it. Each panel shows the min–max,
+average and latest value for the visible range.
 
 The download connects to the meter over GATT (about 10 s for all four series),
 then disconnects. Live menu bar readings are unaffected and remain
@@ -153,9 +154,9 @@ Requires Pillow (`pip install pillow`) and macOS's `iconutil`.
 ## Releasing
 
 ```bash
-VERSION=1.1.1 ./package.sh      # builds the .app and AranetBar-1.1.1.zip
-gh release create v1.1.1 AranetBar-1.1.1.zip \
-    --title "AranetBar 1.1.1" --notes "…"
+VERSION=1.1.2 ./package.sh      # builds the .app and AranetBar-1.1.2.zip
+gh release create v1.1.2 AranetBar-1.1.2.zip \
+    --title "AranetBar 1.1.2" --notes "…"
 ```
 
 `build.sh` compiles a **universal binary** (arm64 + x86_64) and stamps

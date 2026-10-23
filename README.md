@@ -64,9 +64,10 @@ connects briefly and only when you open or refresh the history window.
 Pick **History…** (⌘H) from the menu bar. The window shows the meter's full
 17.5-day ring buffer as stacked CO₂, temperature, humidity and pressure panels,
 with 24 h / 7 days / All ranges, hover readouts, a °C/°F toggle and CSV export.
-Scroll the mouse wheel (or pinch on a trackpad) over the chart to zoom around
-the cursor; double-click to reset. The newest snapshot is cached, so it opens
-instantly and still works when the meter is out of range.
+Scroll the mouse wheel (or pinch) over the chart to zoom around the cursor,
+scroll left/right to pan through time, and double-click to reset. The newest
+snapshot is cached, so it opens instantly and still works when the meter is out
+of range.
 
 ![AranetBar history window showing 17.5 days of CO₂, temperature, humidity and pressure](docs/aranetbar-history-all.png)
 

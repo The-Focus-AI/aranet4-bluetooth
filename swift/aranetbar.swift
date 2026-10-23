@@ -1088,6 +1088,43 @@ final class HistoryChartView: NSView {
         needsDisplay = true
     }
 
+    /// Shift the visible window through time. Positive x (scrolling right)
+    /// moves towards older readings, matching a timeline you drag sideways.
+    private func pan(by deltaX: Double, layout: HistoryChartLayout, precise: Bool) {
+        guard let snapshot,
+              let fullStart = snapshot.samples.first?.date,
+              let fullEnd = snapshot.samples.last?.date
+        else { return }
+
+        let span = layout.end.timeIntervalSince(layout.start)
+        let fullSpan = fullEnd.timeIntervalSince(fullStart)
+        guard span > 0, fullSpan - span > 1 else { return }
+
+        var fraction = precise
+            ? deltaX / Double(max(layout.plotWidth, 1))
+            : deltaX * 0.05
+        fraction = min(max(fraction, -0.2), 0.2)
+        guard abs(fraction) > 0.0001 else { return }
+
+        let shift = span * fraction
+        var start = layout.start.addingTimeInterval(-shift)
+        var end = layout.end.addingTimeInterval(-shift)
+        if start < fullStart {
+            start = fullStart
+            end = start.addingTimeInterval(span)
+        }
+        if end > fullEnd {
+            end = fullEnd
+            start = end.addingTimeInterval(-span)
+        }
+        guard abs(start.timeIntervalSince(layout.start)) > 0.5 else { return }
+
+        zoomedRange = (start, end)
+        hoverDate = nil
+        onZoomStateChanged?(true)
+        needsDisplay = true
+    }
+
     private func resetZoom() {
         guard zoomedRange != nil else { return }
         zoomedRange = nil
@@ -1462,14 +1499,24 @@ final class HistoryChartView: NSView {
 
     override func scrollWheel(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
-        guard makeLayout() != nil else {
+        guard let layout = makeLayout() else {
             super.scrollWheel(with: event)
             return
         }
-        // Ignore momentum so a flick does not keep zooming after the fingers lift.
+        // Ignore momentum so a flick does not keep moving after the fingers lift.
         guard event.momentumPhase.isEmpty else { return }
 
-        var delta = event.scrollingDeltaY
+        let deltaX = Double(event.scrollingDeltaX)
+        let deltaY = Double(event.scrollingDeltaY)
+
+        // Horizontal gestures pan through time; vertical ones zoom. On a
+        // diagonal trackpad gesture the dominant axis wins.
+        if abs(deltaX) > abs(deltaY) * 1.2, deltaX != 0 {
+            pan(by: deltaX, layout: layout, precise: event.hasPreciseScrollingDeltas)
+            return
+        }
+
+        var delta = deltaY
         if event.isDirectionInvertedFromDevice { delta = -delta }
         guard delta != 0 else { return }
 
@@ -1527,7 +1574,7 @@ final class HistoryWindowController: NSWindowController, NSWindowDelegate {
     private let exportButton = NSButton(title: "Export CSV…", target: nil, action: nil)
     private let statusLabel = NSTextField(labelWithString: "")
     private let hintLabel = NSTextField(
-        labelWithString: "Scroll to zoom · double-click to reset · timestamps reconstructed"
+        labelWithString: "Scroll ↕ zoom · ↔ pan · double-click reset"
     )
     private let spinner = NSProgressIndicator()
     private let chartView = HistoryChartView()
