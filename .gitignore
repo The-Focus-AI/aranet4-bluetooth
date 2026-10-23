@@ -2,25 +2,25 @@
 .DS_Store
 
 # Python
-.venv/
-__pycache__/
 *.py[cod]
 .pytest_cache/
+.venv/
+__pycache__/
 
 # Cached CoreBluetooth identifier (per-Mac, not portable)
 python/.aranet-address
 
 # Downloaded history and charts (your environment's data)
+aranet-daily-temps*.png
+aranet-daily-temps*.svg
 aranet-history*.csv
 aranet-history*.json
-aranet-history*.svg
 aranet-history*.png
-aranet-daily-temps*.svg
-aranet-daily-temps*.png
+aranet-history*.svg
 
 # Built app bundle (regenerate with swift/build.sh)
-swift/AranetBar.app/
 swift/.build/
+swift/AranetBar.app/
 
 # Release archives (regenerate with swift/package.sh)
 swift/AranetBar-*.zip

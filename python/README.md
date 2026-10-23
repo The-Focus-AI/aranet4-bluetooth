@@ -78,8 +78,8 @@ and writes CSV (or JSON) with reconstructed timestamps:
 | `--json` | shorthand for JSON on stdout |
 
 ```bash
-.venv/bin/python python/aranet.py history --last 288 --out day.csv
-.venv/bin/python python/aranet.py history --days 7 --format json --out week.json
+.venv/bin/python python/aranet.py history --last 288 --out aranet-history-day.csv
+.venv/bin/python python/aranet.py history --days 7 --format json --out aranet-history-week.json
 .venv/bin/python python/aranet.py history --json | jq '.records[-1]'
 ```
 

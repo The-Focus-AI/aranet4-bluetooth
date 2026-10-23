@@ -104,10 +104,10 @@ Headless equivalents are useful for scripting:
 
 ```bash
 ./aranetbar.swift --history                       # print a summary
-./aranetbar.swift --history --history-csv out.csv
-./aranetbar.swift --history --history-json out.json
+./aranetbar.swift --history --history-csv aranet-history.csv
+./aranetbar.swift --history --history-json aranet-history.json
 ./aranetbar.swift --history --history-days 7      # only the last week
-./aranetbar.swift --render-history chart.png      # render the window from cache
+./aranetbar.swift --render-history aranet-history-window.png  # render from cache
 ```
 
 ## Requirements
