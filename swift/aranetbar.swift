@@ -916,7 +916,9 @@ final class HistoryChartView: NSView {
     }
     var range: HistoryRange = .all {
         didSet {
+            zoomedRange = nil
             hoverDate = nil
+            onZoomStateChanged?(false)
             needsDisplay = true
         }
     }
@@ -926,10 +928,14 @@ final class HistoryChartView: NSView {
     var statusMessage = "No history yet" {
         didSet { needsDisplay = true }
     }
+    /// Called with true while the user has scrolled/pinched away from the
+    /// selected range, and false when the range is restored.
+    var onZoomStateChanged: ((Bool) -> Void)?
 
     private var hoverTrackingArea: NSTrackingArea?
     private var hoverDate: Date?
     private var hoverPoint: NSPoint?
+    private var zoomedRange: (start: Date, end: Date)?
 
     private static let timeFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -981,13 +987,25 @@ final class HistoryChartView: NSView {
               let last = snapshot.samples.last?.date
         else { return nil }
 
+        let fullStart = first
+        let fullEnd = last
         let start: Date
-        if let seconds = range.seconds {
-            start = max(first, last.addingTimeInterval(-seconds))
+        let end: Date
+        if let zoomed = zoomedRange,
+           zoomed.end > fullStart, zoomed.start < fullEnd,
+           zoomed.end.timeIntervalSince(zoomed.start) > 1
+        {
+            start = max(zoomed.start, fullStart)
+            end = min(zoomed.end, fullEnd)
         } else {
-            start = first
+            if let seconds = range.seconds {
+                start = max(fullStart, fullEnd.addingTimeInterval(-seconds))
+            } else {
+                start = fullStart
+            }
+            end = fullEnd
         }
-        let samples = snapshot.samples.filter { $0.date >= start && $0.date <= last }
+        let samples = snapshot.samples.filter { $0.date >= start && $0.date <= end }
         guard !samples.isEmpty else { return nil }
 
         let inset = NSEdgeInsets(top: 8, left: 12, bottom: 6, right: 14)
@@ -1007,7 +1025,7 @@ final class HistoryChartView: NSView {
         return HistoryChartLayout(
             samples: samples,
             start: start,
-            end: max(last, start.addingTimeInterval(1)),
+            end: max(end, start.addingTimeInterval(1)),
             outer: outer,
             plotX: outer.minX + axisWidth,
             plotWidth: outer.width - axisWidth - 6,
@@ -1016,6 +1034,66 @@ final class HistoryChartView: NSView {
             headerHeight: headerHeight,
             xAxisHeight: xAxisHeight
         )
+    }
+
+    // MARK: Zoom
+
+    /// Zoom around the cursor. `factor > 1` zooms in; the visible time span is
+    /// divided by it, so the anchor keeps its position under the pointer.
+    private func zoom(by factor: Double, at point: NSPoint) {
+        guard factor > 0, factor.isFinite,
+              let snapshot,
+              let layout = makeLayout(),
+              let fullStart = snapshot.samples.first?.date,
+              let fullEnd = snapshot.samples.last?.date
+        else { return }
+
+        let currentSpan = layout.end.timeIntervalSince(layout.start)
+        guard currentSpan > 0 else { return }
+        let fullSpan = fullEnd.timeIntervalSince(fullStart)
+        guard fullSpan > 0 else { return }
+
+        let minimumSpan = max(Double(max(snapshot.intervalSeconds, 1)) * 3, 15 * 60)
+        let targetSpan = min(max(currentSpan / factor, minimumSpan), fullSpan)
+        guard abs(targetSpan - currentSpan) > 0.5 else { return }
+
+        let clampedX = min(max(point.x, layout.plotX), layout.plotX + layout.plotWidth)
+        let anchor = layout.date(atX: clampedX)
+        let fraction = min(
+            max(anchor.timeIntervalSince(layout.start) / currentSpan, 0), 1
+        )
+
+        var start = anchor.addingTimeInterval(-fraction * targetSpan)
+        var end = start.addingTimeInterval(targetSpan)
+        if start < fullStart {
+            start = fullStart
+            end = start.addingTimeInterval(targetSpan)
+        }
+        if end > fullEnd {
+            end = fullEnd
+            start = end.addingTimeInterval(-targetSpan)
+        }
+
+        // Zooming all the way out is the same as resetting.
+        if start <= fullStart.addingTimeInterval(1),
+           end >= fullEnd.addingTimeInterval(-1)
+        {
+            resetZoom()
+            return
+        }
+
+        zoomedRange = (start, end)
+        hoverDate = nil
+        onZoomStateChanged?(true)
+        needsDisplay = true
+    }
+
+    private func resetZoom() {
+        guard zoomedRange != nil else { return }
+        zoomedRange = nil
+        hoverDate = nil
+        onZoomStateChanged?(false)
+        needsDisplay = true
     }
 
     private func drawEmptyState() {
@@ -1382,6 +1460,46 @@ final class HistoryChartView: NSView {
         clearHover()
     }
 
+    override func scrollWheel(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        guard makeLayout() != nil else {
+            super.scrollWheel(with: event)
+            return
+        }
+        // Ignore momentum so a flick does not keep zooming after the fingers lift.
+        guard event.momentumPhase.isEmpty else { return }
+
+        var delta = event.scrollingDeltaY
+        if event.isDirectionInvertedFromDevice { delta = -delta }
+        guard delta != 0 else { return }
+
+        // Wheel notches are ±1; trackpad deltas arrive in points. Keep both
+        // smooth, and clamp the per-event factor so one accelerated event
+        // cannot jump from 17 days to a few hours.
+        let steps = event.hasPreciseScrollingDeltas ? Double(delta) / 40.0 : Double(delta)
+        let factor = min(max(pow(1.2, steps), 0.8), 1.25)
+        zoom(by: factor, at: point)
+    }
+
+    override func magnify(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        guard makeLayout() != nil else {
+            super.magnify(with: event)
+            return
+        }
+        let factor = 1 + Double(event.magnification)
+        guard factor > 0.05 else { return }
+        zoom(by: factor, at: point)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        if event.clickCount == 2 {
+            resetZoom()
+        } else {
+            super.mouseDown(with: event)
+        }
+    }
+
     private func clearHover() {
         guard hoverDate != nil || hoverPoint != nil else { return }
         hoverDate = nil
@@ -1409,7 +1527,7 @@ final class HistoryWindowController: NSWindowController, NSWindowDelegate {
     private let exportButton = NSButton(title: "Export CSV…", target: nil, action: nil)
     private let statusLabel = NSTextField(labelWithString: "")
     private let hintLabel = NSTextField(
-        labelWithString: "Timestamps reconstructed from the meter's log interval."
+        labelWithString: "Scroll to zoom · double-click to reset · timestamps reconstructed"
     )
     private let spinner = NSProgressIndicator()
     private let chartView = HistoryChartView()
@@ -1487,6 +1605,12 @@ final class HistoryWindowController: NSWindowController, NSWindowDelegate {
         toolbar.spacing = 8
 
         chartView.useFahrenheit = unitButton.state == .on
+        chartView.onZoomStateChanged = { [weak self] zoomed in
+            guard let self else { return }
+            self.rangeControl.selectedSegment = zoomed
+                ? -1
+                : self.chartView.range.rawValue
+        }
         chartView.setContentHuggingPriority(.defaultLow, for: .vertical)
         chartView.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
 
