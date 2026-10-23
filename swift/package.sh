@@ -2,13 +2,13 @@
 #
 # Build AranetBar.app and package it as a distributable zip.
 #
-#   ./package.sh                 # 1.1.2
-#   VERSION=1.1.2 ./package.sh
+#   ./package.sh                 # 1.1.3
+#   VERSION=1.1.3 ./package.sh
 #
 set -e
 
 cd "$(dirname "$0")"
-VERSION="${VERSION:-1.1.2}"
+VERSION="${VERSION:-1.1.3}"
 
 VERSION="$VERSION" ./build.sh
 

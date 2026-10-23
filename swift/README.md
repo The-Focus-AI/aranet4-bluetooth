@@ -123,6 +123,10 @@ Headless equivalents are useful for scripting:
 - History needs the meter to be in range and not connected to another central;
   the Aranet phone app and AranetBar cannot hold the link at the same time
 
+If the menu bar is full, macOS may hide AranetBar's item under the notch.
+Double-clicking **AranetBar.app** in Finder opens the History window; the app
+also opens it automatically at launch when it detects the item is hidden.
+
 ## How it works
 
 The meter broadcasts its full reading in the BLE advertisement under company ID
@@ -154,9 +158,9 @@ Requires Pillow (`pip install pillow`) and macOS's `iconutil`.
 ## Releasing
 
 ```bash
-VERSION=1.1.2 ./package.sh      # builds the .app and AranetBar-1.1.2.zip
-gh release create v1.1.2 AranetBar-1.1.2.zip \
-    --title "AranetBar 1.1.2" --notes "…"
+VERSION=1.1.3 ./package.sh      # builds the .app and AranetBar-1.1.3.zip
+gh release create v1.1.3 AranetBar-1.1.3.zip \
+    --title "AranetBar 1.1.3" --notes "…"
 ```
 
 `build.sh` compiles a **universal binary** (arm64 + x86_64) and stamps

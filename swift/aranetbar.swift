@@ -1878,6 +1878,7 @@ final class AranetBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate, CBCen
     private var historyRenderPath: String?
     private var historyRenderRange: HistoryRange?
     private var showHistoryOnLaunch = false
+    private var didCheckStatusItemVisibility = false
 
     // Scanning is duty-cycled: the sensor only logs every `interval` seconds
     // (5 min by default), so there is no point keeping the radio busy forever.
@@ -1964,6 +1965,9 @@ final class AranetBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate, CBCen
                     self?.showHistory()
                 }
             }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                self?.checkStatusItemVisibility()
+            }
         }
     }
 
@@ -1971,6 +1975,43 @@ final class AranetBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate, CBCen
         guard let index = args.firstIndex(of: flag), index + 1 < args.count else { return nil }
         let value = args[index + 1]
         return value.hasPrefix("--") ? nil : value
+    }
+
+    /// Double-clicking AranetBar in Finder while it is already running should
+    /// do something visible: the app is an accessory, and its menu bar item can
+    /// be hidden by the notch on a crowded menu bar.
+    func applicationShouldHandleReopen(
+        _ sender: NSApplication, hasVisibleWindows flag: Bool
+    ) -> Bool {
+        if let window = historyController?.window, window.isVisible {
+            historyController?.present()
+        } else {
+            showHistory()
+        }
+        return true
+    }
+
+    /// macOS can park a status item under the camera housing when the menu bar
+    /// is full. In that case, a menu bar-only app looks like it failed to
+    /// launch, so open the history window instead of disappearing.
+    private func checkStatusItemVisibility() {
+        guard !didCheckStatusItemVisibility else { return }
+        didCheckStatusItemVisibility = true
+        guard !oneshot, !dumpMenu, !headlessHistory,
+              let screen = NSScreen.main,
+              let left = screen.auxiliaryTopLeftArea,
+              let right = screen.auxiliaryTopRightArea,
+              let frame = statusItem?.button?.window?.frame
+        else { return }
+
+        let notchGap = NSRect(
+            x: left.maxX, y: left.minY,
+            width: max(0, right.minX - left.maxX), height: left.height
+        )
+        guard notchGap.width > 0, frame.intersects(notchGap) else { return }
+
+        log("📐 status item is under the notch; opening history window")
+        showHistory()
     }
 
     private func setupStatusItem() {

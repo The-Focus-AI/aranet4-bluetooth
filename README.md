@@ -37,6 +37,10 @@ unzip, and drag to `/Applications`. It is ad-hoc signed, not notarized, so on
 first launch use right-click → **Open** (or `xattr -dr com.apple.quarantine
 AranetBar.app`).
 
+If your menu bar is full, macOS can hide AranetBar's item under the notch.
+Double-clicking the app in Finder opens its History window, and the app does
+that automatically at launch when it detects the item is hidden.
+
 Or build it yourself:
 
 ```bash
